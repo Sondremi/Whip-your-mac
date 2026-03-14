@@ -52,7 +52,6 @@ def list_audio_files(folder: str) -> list[str]:
             files.append(os.path.join(folder, name))
     return sorted(files)
 
-
 def play_sound_async(path: str):
     """Play an audio file in the background without blocking."""
     def _play():
@@ -61,6 +60,14 @@ def play_sound_async(path: str):
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     threading.Thread(target=_play, daemon=True).start()
+
+def find_model() -> str:
+    """
+    Return path to hand_landmarker.task in models/ folder.
+    """
+    script_dir  = os.path.dirname(os.path.abspath(__file__))
+    local_model = os.path.join(script_dir, "models", "hand_landmarker.task")
+    return local_model
 
 class LassoDetector:
     WINDOW_SEC      = 1.2   # look-back time window (seconds)
