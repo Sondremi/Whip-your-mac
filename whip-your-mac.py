@@ -270,3 +270,34 @@ def run(sound_source, show_preview: bool):
         cap.release()
         cv2.destroyAllWindows()
         landmarker.close()
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--no-preview",
+        action="store_true",
+        help="Run without the camera preview window (lower CPU usage)"
+    )
+    args = parser.parse_args()
+
+    audio_folder = find_audio_folder()
+    audio_files  = list_audio_files(audio_folder) if audio_folder else []
+
+    if not audio_folder:
+        print("Error: No 'audio' folder found.")
+        sys.exit(1)
+
+    if not audio_files:
+        print("Error: 'audio' folder is empty — no supported audio files found.")
+        sys.exit(1)
+
+    sound_source = audio_files   # list -> random pick per whip
+    for f in audio_files:
+        print(f" • {os.path.basename(f)}")
+
+    show_preview = not args.no_preview
+    run(sound_source, show_preview)
+
+
+if __name__ == "__main__":
+    main()
