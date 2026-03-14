@@ -16,6 +16,30 @@ from collections import deque
 # Supported audio file extensions
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".aiff", ".aif", ".m4a", ".ogg", ".flac"}
 
+# Geometry
+
+def angle_diff(a: float, b: float) -> float:
+    """Signed angular difference in [-pi, pi]."""
+    return (b - a + math.pi) % (2 * math.pi) - math.pi
+
+def compute_arc(positions: deque) -> float:
+    """
+    Compute accumulated angular rotation around the centroid of the given
+    positions. Returns the absolute value in radians.
+    """
+    if len(positions) < 3:
+        return 0.0
+
+    pts    = np.array(positions, dtype=float)
+    cx, cy = pts[:, 0].mean(), pts[:, 1].mean()
+    angles = [math.atan2(p[1] - cy, p[0] - cx) for p in pts]
+
+    total = 0.0
+    for i in range(1, len(angles)):
+        total += angle_diff(angles[i - 1], angles[i])
+
+    return abs(total)
+
 def find_audio_folder() -> str | None:
     """Return path to the 'audio' folder next to this script, or None."""
     script_dir   = os.path.dirname(os.path.abspath(__file__))
