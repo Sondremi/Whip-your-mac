@@ -116,3 +116,38 @@ class LassoDetector:
     def trail_points(self, w: int, h: int) -> list[tuple[int, int]]:
         """Return pixel coordinates of the motion trail."""
         return [(int(p[0] * w), int(p[1] * h)) for p in self._positions]
+
+def draw_overlay(frame, detector: LassoDetector, count: int, fps: float,
+                 hand_visible: bool):
+    h, w = frame.shape[:2]
+
+    # Flash effect on trigger
+    if detector.is_flashing:
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (0, 0), (w, h), (0, 220, 255), -1)
+        cv2.addWeighted(overlay, 0.25, frame, 0.75, 0, frame)
+        cv2.putText(frame, "WHIP!", (w // 2 - 80, h // 2),
+                    cv2.FONT_HERSHEY_DUPLEX, 2.8, (0, 200, 255), 5)
+
+    # Motion trail
+    trail = detector.trail_points(w, h)
+    if len(trail) > 2:
+        for i in range(1, len(trail)):
+            alpha = i / len(trail)
+            color = (int(255 * alpha), int(180 * alpha), 0)
+            cv2.line(frame, trail[i - 1], trail[i], color, 2)
+
+    # Top-left HUD
+    cv2.rectangle(frame, (0, 0), (260, 75), (0, 0, 0), -1)
+    cv2.putText(frame, f"WHIPS: {count}", (10, 28),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 220, 120), 2)
+    cv2.putText(frame, f"FPS: {fps:.0f}", (10, 55),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (180, 180, 180), 1)
+
+    # Bottom status
+    status_color = (0, 255, 120) if hand_visible else (80, 80, 255)
+    status_text  = "HAND VISIBLE" if hand_visible else "NO HAND"
+    cv2.putText(frame, status_text, (10, h - 12),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, status_color, 1)
+    cv2.putText(frame, "Q = quit", (w - 110, h - 12),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (160, 160, 160), 1)
