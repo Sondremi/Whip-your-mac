@@ -158,3 +158,115 @@ def draw_overlay(frame, detector: LassoDetector, count: int, fps: float,
                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, status_color, 1)
     cv2.putText(frame, "Q = quit", (w - 110, h - 12),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.45, (160, 160, 160), 1)
+
+def run(sound_source, show_preview: bool):
+    """
+    sound_source: a single file path (str) or a list of paths to pick
+                  from randomly on each trigger.
+    """
+    model_path = find_model()
+    if not model_path:
+        print("Error: Hand landmarker model not found.")
+        sys.exit(1)
+
+    # Build Tasks API landmarker (VIDEO mode = frame-by-frame with timestamps)
+    options = mp_vision.HandLandmarkerOptions(
+        base_options=BaseOptions(model_asset_path=model_path),
+        running_mode=mp_vision.RunningMode.VIDEO,
+        num_hands=1,
+        min_hand_detection_confidence=0.6,
+        min_hand_presence_confidence=0.5,
+        min_tracking_confidence=0.5,
+    )
+    landmarker = mp_vision.HandLandmarker.create_from_options(options)
+
+    # Hand landmark indices used for tracking
+    WRIST   = 0
+    MID_MCP = 9   # middle finger MCP
+
+    # Skeleton connection pairs for drawing
+    CONNECTIONS = [
+        (0,1),(1,2),(2,3),(3,4),
+        (0,5),(5,6),(6,7),(7,8),
+        (5,9),(9,10),(10,11),(11,12),
+        (9,13),(13,14),(14,15),(15,16),
+        (13,17),(17,18),(18,19),(19,20),(0,17),
+    ]
+
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        print("Error: Could not open camera.")
+        sys.exit(1)
+
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH,  640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
+    detector   = LassoDetector()
+    whip_count = 0
+    fps        = 0.0
+    t_prev     = time.time()
+    # Tasks API requires strictly increasing timestamps; track separately
+    timestamp_ms = 0
+
+    print("Whip your mac...")
+
+    try:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                continue
+
+            frame = cv2.flip(frame, 1)
+            h, w  = frame.shape[:2]
+
+            now    = time.time()
+            fps    = 0.9 * fps + 0.1 * (1.0 / max(now - t_prev, 1e-6))
+            t_prev = now
+
+            # Strictly increasing integer timestamp required by Tasks API
+            timestamp_ms += 1
+
+            rgb      = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+            result   = landmarker.detect_for_video(mp_image, timestamp_ms)
+
+            hand_visible = False
+            hx = hy = 0.0
+
+            if result.hand_landmarks:
+                hand_visible = True
+                lm = result.hand_landmarks[0]
+
+                hx = (lm[WRIST].x + lm[MID_MCP].x) / 2
+                hy = (lm[WRIST].y + lm[MID_MCP].y) / 2
+
+                triggered = detector.update(hx, hy, w, h)
+                if triggered:
+                    whip_count += 1
+                    chosen = random.choice(sound_source)
+                    play_sound_async(chosen)
+                    sound_name = os.path.basename(chosen)
+                    print(f" WHIP #{whip_count}! [{sound_name}] ({time.strftime('%H:%M:%S')})")
+
+                if show_preview:
+                    pts = [(int(lm[i].x * w), int(lm[i].y * h))
+                           for i in range(len(lm))]
+                    for a, b in CONNECTIONS:
+                        cv2.line(frame, pts[a], pts[b], (0, 100, 180), 1)
+                    for pt in pts:
+                        cv2.circle(frame, pt, 3, (0, 180, 255), -1)
+
+            if show_preview:
+                draw_overlay(frame, detector, whip_count, fps, hand_visible)
+                cv2.imshow("Whip your mac", frame)
+
+                key = cv2.waitKey(1) & 0xFF
+                if key in (ord("q"), ord("Q"), 27):
+                    break
+
+    except KeyboardInterrupt:
+        print("Stopping...")
+    finally:
+        cap.release()
+        cv2.destroyAllWindows()
+        landmarker.close()
