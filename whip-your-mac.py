@@ -16,8 +16,6 @@ from collections import deque
 # Supported audio file extensions
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".aiff", ".aif", ".m4a", ".ogg", ".flac"}
 
-# Geometry
-
 def angle_diff(a: float, b: float) -> float:
     """Signed angular difference in [-pi, pi]."""
     return (b - a + math.pi) % (2 * math.pi) - math.pi
@@ -63,3 +61,58 @@ def play_sound_async(path: str):
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     threading.Thread(target=_play, daemon=True).start()
+
+class LassoDetector:
+    WINDOW_SEC      = 1.2   # look-back time window (seconds)
+    MIN_ARC_RAD     = 4.5   # minimum rotation ~0.7 full circles
+    MIN_RADIUS_NORM = 0.04  # minimum circle radius (normalised 0-1)
+    COOLDOWN_SEC    = 0.8   # minimum time between triggers
+
+    def __init__(self):
+        self._positions: deque = deque()   # (x, y, timestamp)
+        self._last_trigger = 0.0
+        self._flash_until  = 0.0
+
+    def update(self, x: float, y: float, frame_w: int, frame_h: int) -> bool:
+        """
+        Feed a new normalised hand position (0-1).
+        Returns True if a lasso gesture was detected.
+        """
+        now = time.time()
+        self._positions.append((x, y, now))
+
+        # Trim old points outside the time window
+        cutoff = now - self.WINDOW_SEC
+        while self._positions and self._positions[0][2] < cutoff:
+            self._positions.popleft()
+
+        if len(self._positions) < 8:
+            return False
+
+        if now - self._last_trigger < self.COOLDOWN_SEC:
+            return False
+
+        pts = [(p[0], p[1]) for p in self._positions]
+        arc = compute_arc(deque(pts))
+
+        arr    = np.array(pts)
+        cx, cy = arr[:, 0].mean(), arr[:, 1].mean()
+        radii  = np.sqrt((arr[:, 0] - cx) ** 2 + (arr[:, 1] - cy) ** 2)
+        radius = radii.mean()
+
+        triggered = arc >= self.MIN_ARC_RAD and radius >= self.MIN_RADIUS_NORM
+
+        if triggered:
+            self._last_trigger = now
+            self._flash_until  = now + 0.4
+            return True
+
+        return False
+
+    @property
+    def is_flashing(self) -> bool:
+        return time.time() < self._flash_until
+
+    def trail_points(self, w: int, h: int) -> list[tuple[int, int]]:
+        """Return pixel coordinates of the motion trail."""
+        return [(int(p[0] * w), int(p[1] * h)) for p in self._positions]
