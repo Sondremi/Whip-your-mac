@@ -103,7 +103,7 @@ class LassoDetector:
     MIN_RADIUS_NORM = 0.04  # minimum circle radius (normalised 0-1)
     MAX_RADIUS_CV   = 0.50  # reject very non-circular trails
     MAX_LOOP_GAP    = 1.7   # start-end gap relative to radius
-    COOLDOWN_SEC    = 0.8   # minimum time between triggers
+    COOLDOWN_SEC    = 1.2   # minimum time between triggers
 
     def __init__(self):
         self._positions: deque = deque()   # (x, y, timestamp)
