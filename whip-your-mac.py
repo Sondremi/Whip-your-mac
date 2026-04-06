@@ -38,6 +38,34 @@ def compute_arc(positions: deque) -> float:
 
     return abs(total)
 
+def hand_is_closed(landmarks) -> bool:
+    """
+    Heuristic for a closed hand (fist-like): fingertip distance to wrist
+    must be relatively short compared to palm size.
+    """
+    WRIST = 0
+    INDEX_MCP = 5
+    PINKY_MCP = 17
+    TIP_IDS = [8, 12, 16, 20]
+
+    wrist = landmarks[WRIST]
+    index_mcp = landmarks[INDEX_MCP]
+    pinky_mcp = landmarks[PINKY_MCP]
+
+    palm_size = math.dist((index_mcp.x, index_mcp.y), (pinky_mcp.x, pinky_mcp.y))
+    if palm_size < 1e-5:
+        return False
+
+    tip_distances = [
+        math.dist((landmarks[i].x, landmarks[i].y), (wrist.x, wrist.y))
+        for i in TIP_IDS
+    ]
+    avg_tip_dist = sum(tip_distances) / len(tip_distances)
+
+    # Lower value means fingers are curled in towards the palm/wrist.
+    curl_ratio = avg_tip_dist / palm_size
+    return curl_ratio < 1.85
+
 def find_audio_folder() -> str | None:
     """Return path to the 'audio' folder next to this script, or None."""
     script_dir   = os.path.dirname(os.path.abspath(__file__))
@@ -71,8 +99,10 @@ def find_model() -> str:
 
 class LassoDetector:
     WINDOW_SEC      = 1.2   # look-back time window (seconds)
-    MIN_ARC_RAD     = 4.5   # minimum rotation ~0.7 full circles
+    MIN_ARC_RAD     = 5.2   # minimum rotation ~0.83 full circles
     MIN_RADIUS_NORM = 0.04  # minimum circle radius (normalised 0-1)
+    MAX_RADIUS_CV   = 0.50  # reject very non-circular trails
+    MAX_LOOP_GAP    = 1.7   # start-end gap relative to radius
     COOLDOWN_SEC    = 0.8   # minimum time between triggers
 
     def __init__(self):
@@ -80,7 +110,8 @@ class LassoDetector:
         self._last_trigger = 0.0
         self._flash_until  = 0.0
 
-    def update(self, x: float, y: float, frame_w: int, frame_h: int) -> bool:
+    def update(self, x: float, y: float, frame_w: int, frame_h: int,
+               hand_closed: bool) -> bool:
         """
         Feed a new normalised hand position (0-1).
         Returns True if a lasso gesture was detected.
@@ -106,8 +137,19 @@ class LassoDetector:
         cx, cy = arr[:, 0].mean(), arr[:, 1].mean()
         radii  = np.sqrt((arr[:, 0] - cx) ** 2 + (arr[:, 1] - cy) ** 2)
         radius = radii.mean()
+        radius_cv = float(np.std(radii) / max(radius, 1e-6))
 
-        triggered = arc >= self.MIN_ARC_RAD and radius >= self.MIN_RADIUS_NORM
+        start_x, start_y = pts[0]
+        end_x, end_y = pts[-1]
+        loop_gap = math.dist((start_x, start_y), (end_x, end_y))
+
+        triggered = (
+            hand_closed
+            and arc >= self.MIN_ARC_RAD
+            and radius >= self.MIN_RADIUS_NORM
+            and radius_cv <= self.MAX_RADIUS_CV
+            and loop_gap <= radius * self.MAX_LOOP_GAP
+        )
 
         if triggered:
             self._last_trigger = now
@@ -125,7 +167,7 @@ class LassoDetector:
         return [(int(p[0] * w), int(p[1] * h)) for p in self._positions]
 
 def draw_overlay(frame, detector: LassoDetector, count: int, fps: float,
-                 hand_visible: bool):
+                 hand_visible: bool, hand_closed: bool):
     h, w = frame.shape[:2]
 
     # Flash effect on trigger
@@ -156,6 +198,10 @@ def draw_overlay(frame, detector: LassoDetector, count: int, fps: float,
     status_text  = "HAND VISIBLE" if hand_visible else "NO HAND"
     cv2.putText(frame, status_text, (10, h - 12),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, status_color, 1)
+    ready_text = "FIST: READY" if hand_closed else "FIST: OPEN"
+    ready_color = (0, 220, 255) if hand_closed else (120, 120, 120)
+    cv2.putText(frame, ready_text, (130, h - 12),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, ready_color, 1)
     cv2.putText(frame, "Q = quit", (w - 110, h - 12),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.45, (160, 160, 160), 1)
 
@@ -231,16 +277,18 @@ def run(sound_source, show_preview: bool):
             result   = landmarker.detect_for_video(mp_image, timestamp_ms)
 
             hand_visible = False
+            hand_closed = False
             hx = hy = 0.0
 
             if result.hand_landmarks:
                 hand_visible = True
                 lm = result.hand_landmarks[0]
+                hand_closed = hand_is_closed(lm)
 
                 hx = (lm[WRIST].x + lm[MID_MCP].x) / 2
                 hy = (lm[WRIST].y + lm[MID_MCP].y) / 2
 
-                triggered = detector.update(hx, hy, w, h)
+                triggered = detector.update(hx, hy, w, h, hand_closed)
                 if triggered:
                     whip_count += 1
                     chosen = random.choice(sound_source)
@@ -257,7 +305,8 @@ def run(sound_source, show_preview: bool):
                         cv2.circle(frame, pt, 3, (0, 180, 255), -1)
 
             if show_preview:
-                draw_overlay(frame, detector, whip_count, fps, hand_visible)
+                draw_overlay(frame, detector, whip_count, fps,
+                             hand_visible, hand_closed)
                 cv2.imshow("Whip your mac", frame)
 
                 key = cv2.waitKey(1) & 0xFF
